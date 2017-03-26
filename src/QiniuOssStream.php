@@ -418,9 +418,7 @@ class QiniuOssStream implements WrapperInterface
      */
     public function mkdir($path, $mode, $options)
     {
-        return $this
-            ->_getOssClient($path)
-            ->createObjectDir(AliyunOSS::getBucket(), $this->_getNamePart($path));
+        return false;
     }
 
     /**
@@ -463,26 +461,15 @@ class QiniuOssStream implements WrapperInterface
     {
         $dirName = $this->_getNamePart($path).'/';
         if (preg_match('@^([a-z0-9+.]|-)+://$@', $path) || $dirName == '/') {
-            $list = $this->_getOssClient($path)->listObjects(AliyunOSS::getBucket());
+            list($iterms, $marker, $err) = $this->_bucketMgr->listFiles(self::OSS_BUCKET);
         } else {
-            $list = $this
-                ->_getOssClient($path)
-                ->listObjects(AliyunOSS::getBucket(), [
-                    OssClient::OSS_PREFIX => $dirName,
-                ]);
+            $prefix = '';
+            $marker = '';
+            $limit = 3;
+            list($iterms, $marker, $err) = $this->_bucketMgr->listFiles(self::OSS_BUCKET, $prefix, $marker, $limit);
         }
 
-        foreach ((array) $list->getPrefixList() as $l) {
-            array_push($this->_bucketList, basename($l->getPrefix()));
-        }
-
-        foreach ((array) $list->getObjectList() as $l) {
-            if ($l == $dirName) {
-                continue;
-            }
-
-            array_push($this->_bucketList, basename($l->getKey()));
-        }
+        array_push($this->_bucketList, basename($iterms));
 
         return $this->_bucketList !== false;
     }
@@ -515,15 +502,15 @@ class QiniuOssStream implements WrapperInterface
         $name = $this->_getNamePart($path);
 
         try {
-            $info = $this->_getOssClient($path)->getObjectMeta(AliyunOSS::getBucket(), $name);
+            $info = $this->_bucketMgr->stat(self::OSS_BUCKET, $name);
             if (isset($info['_info']) && !empty($info['_info'])) {
                 $info = $info['_info'];
-                $stat['size'] = $info['download_content_length'];
+                $stat['size'] = $info['fsize'];
                 $stat['atime'] = time();
-                $stat['mtime'] = $info['filetime'];
+                $stat['mtime'] = $info['putTime'];
                 $stat['mode'] |= 0100000;
             }
-        } catch (\OSS\Core\OssException $e) {
+        } catch (Exception $e) {
             $stat['mode'] |= 040000;
         }
 
