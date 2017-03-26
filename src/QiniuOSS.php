@@ -2,14 +2,12 @@
 
 namespace zhiyicx\Component\QiniuOSS;
 
-use Qiniu\Auth;
 
 /**
 * Qiniu  OSS
 */
-class QiniuOSS extends QiniuClient
+class QiniuOSS
 {
-
     protected static $_wrapperClients = [];
 
     protected static $bucket;
@@ -25,4 +23,70 @@ class QiniuOSS extends QiniuClient
 
         return $this;
     }
-}
+
+    /**
+     * Register this object as stream wrapper client.
+     *
+     * @param string $name
+     *
+     * @return oss
+     */
+    public function registerAsClient($name)
+    {
+        self::$_wrapperClients[$name] = $this;
+
+        return $this;
+    }
+
+    /**
+     * Unregister this object as stream wrapper client.
+     *
+     * @param string $name
+     *
+     * @return oss
+     */
+    public function unregisterAsClient($name)
+    {
+        unset(self::$_wrapperClients[$name]);
+
+        return $this;
+    }
+
+    /**
+     * Get wrapper client for stream type.
+     *
+     * @param string $name
+     *
+     * @return oss
+     */
+    public static function getWrapperClient($name)
+    {
+        return self::$_wrapperClients[$name];
+    }
+
+    /**
+     * Register this object as stream wrapper.
+     *
+     * @param string $name
+     *
+     * @return oss
+     */
+    public function registerStreamWrapper($name = 'oss')
+    {
+        stream_register_wrapper($name, 'zhiyicx\\Component\\QiniuOSS\\QiniuOssStream');
+        $this->registerAsClient($name);
+    }
+
+    /**
+     * Unregister this object as stream wrapper.
+     *
+     * @param string $name
+     *
+     * @return oss
+     */
+    public function unregisterStreamWrapper($name = 'oss')
+    {
+        stream_wrapper_unregister($name);
+        $this->unregisterAsClient($name);
+    }
+} // END
