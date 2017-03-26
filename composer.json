@@ -1,0 +1,32 @@
+{
+    "name": "zhiyicx/qiniu-oss",
+    "type": "library",
+    "description": "A qiniu OSS streamWrapper class and qiniu OSS SDK.",
+    "keywords": ["qiniu", "php", "oss", "wrapper", "streamWrapper"],
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "zhangwei",
+            "email": "942178655@qq.com",
+            "role": "Developer"
+        }
+    ],
+    "require": {
+        "php": ">=5.4",
+        "medz/stream-wrapper-interface": "^1.0",
+        "qiniu/php-sdk": "^7.1"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^4|^5"
+    },
+    "autoload": {
+        "psr-4": {
+            "zhiyicx\\Component\\QiniuOSS\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "zhiyicx\\Component\\QiniuOSS\\Tests\\": "tests/"
+        }
+    }
+}
