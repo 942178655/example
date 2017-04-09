@@ -3,10 +3,6 @@
 namespace zhiyicx\Component\QiniuOSS;
 
 use Exception;
-use Qiniu\Auth;
-use Qiniu\Storage\BucketManager;
-use Qiniu\Storage\UploadManager;
-use Qiniu\Storage\ResumeUploader;
 use Medz\Component\WrapperInterface\WrapperInterface;
 
 /**
@@ -14,10 +10,6 @@ use Medz\Component\WrapperInterface\WrapperInterface;
 */
 class QiniuOssStream implements WrapperInterface
 {
-    const OSS_BUCKET = '28youth';
-    const OSS_ACCESS_KEY_ID = 'UEwud1dLTn5Qn0swqpvKhhvUt2GJBvNvg6agr9sA';
-    const OSS_ACCESS_KEY_SECRET = 'T4IwE_3uPW_bHRoa_L1up8sS58krW7vKxCogo6hl';
-
     /**
      * @var bool Write the buffer on fflush()?
      */
@@ -47,27 +39,6 @@ class QiniuOssStream implements WrapperInterface
      */
     private $_oss = null;
 
-    private $_auth = null;
-
-    private $_bucketMgr = null;
-
-    private $_uploadMgr = null;
-
-    private $_token = null;
-
-    public function __construct()
-    {
-        $this->_auth = new Auth(
-            self::OSS_ACCESS_KEY_ID,
-            self::OSS_ACCESS_KEY_SECRET
-        );
-
-        $this->_bucketMgr = new BucketManager($this->_auth);
-        $this->_uploadMgr = new UploadManager();
-        $this->_token = $this->_auth->uploadToken(self::OSS_BUCKET);
-
-    }
-
     /**
      * Retrieve client for this stream type.
      *
@@ -78,25 +49,20 @@ class QiniuOssStream implements WrapperInterface
      * @author Seven Du <lovevipdsw@outlook.com>
      * @homepage http://medz.cn
      */
-    protected function _getOssClient($path)
+    protected function getOss($path)
     {
         if ($this->_oss === null) {
             $url = explode(':', $path);
-
             if (empty($url)) {
                 throw new Exception("Unable to parse URL $path");
             }
-
             $this->_oss = QiniuOSS::getWrapperClient($url[0]);
-
             if (!$this->_oss) {
                 throw new Exception("Unknown client for wrapper {$url[0]}");
             }
         }
-
         return $this->_oss;
     }
-
     /**
      * Extract object name from URL.
      *
@@ -110,10 +76,8 @@ class QiniuOssStream implements WrapperInterface
         if ($url['host']) {
             return !empty($url['path']) ? $url['host'].$url['path'] : $url['host'];
         }
-
         return '';
     }
-
     /**
      * Open the stream.
      *
@@ -135,30 +99,26 @@ class QiniuOssStream implements WrapperInterface
             $this->_objectSize = 0;
             $this->_position = 0;
             $this->_writeBuffer = true;
-            $this->_getOssClient($path);
-
+            $this->getOss($path);
             return true;
         } else {
             // Otherwise, just see if the file exists or not
             try {
-                $info = $this->_bucketMgr->stat(self::OSS_BUCKET, $name);
+                $info = $this->getOss($path)->getMetadata($name);
                 if ($info) {
                     $this->_objectName = $name;
                     $this->_objectBuffer = null;
-                    $this->_objectSize = (int) $info['fsize'];
+                    $this->_objectSize = $info['size'];
                     $this->_position = 0;
                     $this->_writeBuffer = false;
-
                     return true;
                 }
             } catch (Exception $e) {
                 return false;
             }
         }
-
         return false;
     }
-
     /**
      * Close the stream.
      *
@@ -173,7 +133,6 @@ class QiniuOssStream implements WrapperInterface
         $this->_writeBuffer = false;
         unset($this->_oss);
     }
-
     /**
      * Read from the stream.
      *
@@ -190,14 +149,16 @@ class QiniuOssStream implements WrapperInterface
         if (!$this->_objectName) {
             return '';
         }
-
         // make sure that count doesn't exceed object size
         if ($count + $this->_position > $this->_objectSize) {
             $count = $this->_objectSize - $this->_position;
         }
-
         $range_start = $this->_position;
         $range_end = $this->_position + $count;
+
+        if (!$this->_objectBuffer) {
+            $this->_objectBuffer = file_get_contents($this->_oss->getUrl($this->_objectName));
+        }
 
         // Only fetch more data from OSS if we haven't fetched any data yet (postion=0)
         // OR, the range end position is greater than the size of the current object
@@ -207,15 +168,11 @@ class QiniuOssStream implements WrapperInterface
             $options = [
                 'range' => $range_start.'-'.$range_end,
             ];
-            $this->_objectBuffer .= $this->_bucketMgr->rsPost($this->_objectName);
         }
-
         $data = substr($this->_objectBuffer, $this->_position, $count);
         $this->_position += strlen($data);
-
         return $data;
     }
-
     /**
      * Write to the stream.
      *
@@ -232,7 +189,19 @@ class QiniuOssStream implements WrapperInterface
         $this->_objectBuffer .= $data;
         $this->_objectSize += $len;
         // TODO: handle current position for writing!
-        return $len;
+
+        list($response, $error) = $this->_oss->getUploadManager()->put
+        (
+            $this->_oss->getUploadToken(), 
+            $this->_objectName, 
+            $this->_objectBuffer
+        );
+
+        if ($error) {
+            return false;
+        }
+
+        return $response;
     }
 
     /**
@@ -245,10 +214,8 @@ class QiniuOssStream implements WrapperInterface
         if (!$this->_objectName) {
             return true;
         }
-
         return $this->_position >= $this->_objectSize;
     }
-
     /**
      * What is the current read/write position of the stream.
      *
@@ -258,12 +225,10 @@ class QiniuOssStream implements WrapperInterface
     {
         return $this->_position;
     }
-
     public function stream_lock($operation)
     {
         return false;
     }
-
     /**
      * Enter description here...
      *
@@ -277,7 +242,6 @@ class QiniuOssStream implements WrapperInterface
     {
         return false;
     }
-
     /**
      * Enter description here...
      *
@@ -288,7 +252,6 @@ class QiniuOssStream implements WrapperInterface
     public function stream_cast($cast_as)
     {
     }
-
     /**
      * Update the read/write position of the stream.
      *
@@ -301,25 +264,19 @@ class QiniuOssStream implements WrapperInterface
     {
         if (!$this->_objectName) {
             return false;
-
         // Set position to current location plus $offset
         } elseif ($whence === SEEK_CUR) {
             $offset += $this->_position;
-
         // Set position to end-of-file plus $offset
         } elseif ($whence === SEEK_END) {
             $offset += $this->_objectSize;
         }
-
         if ($offset >= 0 && $offset <= $this->_objectSize) {
             $this->_position = $offset;
-
             return true;
         }
-
         return false;
     }
-
     /**
      * Flush current cached stream data to storage.
      *
@@ -331,12 +288,20 @@ class QiniuOssStream implements WrapperInterface
         if (!$this->_writeBuffer) {
             return false;
         }
-        $ret = $this->_uploadMgr->put($this->_token, $this->_objectName, $this->_objectBuffer);
-        $this->_objectBuffer = null;
 
-        return $ret;
+        list($response, $error) = $this->_oss->getUploadManager()->put
+        (
+            $this->_oss->getUploadToken(), 
+            $this->_objectName, 
+            $this->_objectBuffer
+        );
+
+        if ($error) {
+            return false;
+        }
+
+        return $response;
     }
-
     /**
      * Returns data array of stream variables.
      *
@@ -347,7 +312,6 @@ class QiniuOssStream implements WrapperInterface
         if (!$this->_objectName) {
             return [];
         }
-
         $stat = [];
         $stat['dev'] = 0;
         $stat['ino'] = 0;
@@ -362,25 +326,26 @@ class QiniuOssStream implements WrapperInterface
         $stat['ctime'] = 0;
         $stat['blksize'] = 0;
         $stat['blocks'] = 0;
-
         if (($slash = strstr($this->_objectName, '/')) === false || $slash == strlen($this->_objectName) - 1) {
             /* bucket */
             $stat['mode'] |= 040000;
         } else {
             $stat['mode'] |= 0100000;
         }
+        $info = $this->_oss->getBucketManager()->stat
+        (
+            $this->_oss->getBucket(), 
+            $this->_objectName
+        )[0];
 
-        $info = $this->_bucketMgr->stat(self::OSS_BUCKET, $this->_objectName);
-        $info = $info['_info'];
         if (!empty($info)) {
             $stat['size'] = $info['fsize'];
             $stat['atime'] = time();
-            $stat['mtime'] = $info['putTime'];
+            $stat['mtime'] = floor($info['putTime'] / 10000000);
         }
 
         return $stat;
     }
-
     /**
      * Attempt to delete the item.
      *
@@ -390,9 +355,12 @@ class QiniuOssStream implements WrapperInterface
      */
     public function unlink($path)
     {
-        return $this->_bucketMgr->delete(self::OSS_BUCKET, $this->_getNamePart($path));
+        return $this->getOss($path)->getBucketManager()->delete
+        (
+            $this->getOss($path)->getBucket(), 
+            $this->_getNamePart($path)
+        );
     }
-
     /**
      * Attempt to rename the item.
      *
@@ -403,10 +371,15 @@ class QiniuOssStream implements WrapperInterface
      */
     public function rename($path_from, $path_to)
     {
-        // TODO: Renaming isn't supported, always return false
-        return false;
+        $response = $this->getOss($path_from)->getBucketManager()->rename
+        (
+            $this->getOss($path_from)->getBucket(),
+            $path_from, 
+            $path_to
+        );
+        var_dump($response);
+        return is_null($response);
     }
-
     /**
      * Create a new directory.
      *
@@ -420,7 +393,6 @@ class QiniuOssStream implements WrapperInterface
     {
         return false;
     }
-
     /**
      * Remove a directory.
      *
@@ -433,7 +405,6 @@ class QiniuOssStream implements WrapperInterface
     {
         return false;
     }
-
     /**
      * Return the next filename in the directory.
      *
@@ -445,10 +416,8 @@ class QiniuOssStream implements WrapperInterface
         if ($object !== false) {
             next($this->_bucketList);
         }
-
         return $object;
     }
-
     /**
      * Attempt to open a directory.
      *
@@ -461,19 +430,29 @@ class QiniuOssStream implements WrapperInterface
     {
         $dirName = $this->_getNamePart($path).'/';
         if (preg_match('@^([a-z0-9+.]|-)+://$@', $path) || $dirName == '/') {
-            list($iterms, $marker, $err) = $this->_bucketMgr->listFiles(self::OSS_BUCKET);
+
+            //  Open directory file
+            $iterms = $this->getOss($path)->listContents($dirName);
         } else {
             $prefix = '';
             $marker = '';
             $limit = 3;
-            list($iterms, $marker, $err) = $this->_bucketMgr->listFiles(self::OSS_BUCKET, $prefix, $marker, $limit);
+            list($iterms, $marker, $err) = $this->getOss($path)->getBucketManager()->listFiles
+            (
+                $this->_oss->getBucket(), 
+                $prefix, 
+                $marker, 
+                $limit
+            );
         }
 
-        array_push($this->_bucketList, basename($iterms));
+        if ($iterms) {
+
+            $this->_bucketList = $iterms;
+        }
 
         return $this->_bucketList !== false;
     }
-
     /**
      * Return array of URL variables.
      *
@@ -500,23 +479,19 @@ class QiniuOssStream implements WrapperInterface
             'blocks'  => 0,
         ];
         $name = $this->_getNamePart($path);
-
         try {
-            $info = $this->_bucketMgr->stat(self::OSS_BUCKET, $name);
-            if (isset($info['_info']) && !empty($info['_info'])) {
-                $info = $info['_info'];
-                $stat['size'] = $info['fsize'];
+            $info = $this->getOss($path)->getMetadata($name);
+            if ($info) {
+                $stat['size'] = $info['size'];
                 $stat['atime'] = time();
-                $stat['mtime'] = $info['putTime'];
+                $stat['mtime'] = $info['timestamp'];
                 $stat['mode'] |= 0100000;
             }
         } catch (Exception $e) {
             $stat['mode'] |= 040000;
         }
-
         return $stat;
     }
-
     /**
      * Reset the directory pointer.
      *
@@ -525,10 +500,8 @@ class QiniuOssStream implements WrapperInterface
     public function dir_rewinddir()
     {
         reset($this->_bucketList);
-
         return true;
     }
-
     /**
      * Close a directory.
      *
@@ -537,7 +510,7 @@ class QiniuOssStream implements WrapperInterface
     public function dir_closedir()
     {
         $this->_bucketList = [];
-
         return true;
     }
+
 } // END class AliyunOssStream implements WrapperInterface
